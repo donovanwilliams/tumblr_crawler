@@ -34,7 +34,7 @@ class TumblrCrawler(object):
                 #print page.headers
                 #size = int(page.headers['Content-Length'])
 
-                return BeautifulSoup(page.read())
+                return BeautifulSoup(page.read(), "html.parser")
             except Exception, e:
                 print e, url
                 retry += 1
@@ -65,9 +65,7 @@ class TumblrCrawler(object):
                 retry += 1
 
     def _get_file_from_img_tag(self, node):
-        #print "!!@#@!#!@#!@", node
         for img in node.find_all('img'):
-            #print img
             if img.has_attr('src'):
                 file_url = img['src']
                 filename = "%s/%s" % (self.trunk_name, file_url.rpartition('/')[-1])
@@ -91,7 +89,6 @@ class TumblrCrawler(object):
                     file_url = file_url.rpartition('/')[0]
 
                 filename = "%s/%s.%s" % (self.trunk_name, file_url.rpartition('/')[-1], MAP_FILEEXT.get(file_type, 'unknown'))
-                #print file_url, file_type, filename
                 try:
                     self.download(file_url, filename)
                     pass
@@ -101,7 +98,6 @@ class TumblrCrawler(object):
                     print file_url, file_type, filename, meta
 
     def process_photo_link(self, node):
-        #print node
         links = node.find_all('a')
         if False and len(links) > 0:
             try:
@@ -128,12 +124,17 @@ class TumblrCrawler(object):
                 self.download(file_url, filename)
 
     def crawler_page(self, page):
-        for article in page.find_all('article'):
-            print article['class']
-            for figure in article.find_all('figure'):
-                for container in figure.find_all(class_=['tumblr_video_container', 'photo-wrapper', 'html_photoset']):
+        posts = page.find(id='posts')
+        if posts.name == 'ul':
+            child_tag = 'li'
+        elif posts.name == 'section':
+            child_tag = 'article'
+
+        for post in posts.find_all(name=child_tag):
+            for contents in post.find_all(class_=['post-content', 'post-body']):
+                for container in contents.find_all(class_=['image', 'tumblr_video_container', 'photo-wrapper', 'html_photoset']):
                     try:
-                        if 'photo-wrapper' in container['class']:
+                        if 'photo-wrapper' in container['class'] or 'image' in container['class']:
                             self.process_photo_link(container)
                             pass
                         elif 'html_photoset' in container['class']:
@@ -161,10 +162,8 @@ class TumblrCrawler(object):
 
                 print "## Crawl...", self.url + page_link
                 w = gevent.spawn(self.crawler_page, soup)
-                #print w.ready(), w.successful(), w.started, w.dead
                 worker_list.append(w)
-                next_page_link = soup.find('a', class_='next')
-
+                next_page_link = soup.find(id='footer').find('a')
                 if next_page_link:
                     page_link = next_page_link.get('href')
                 else:
@@ -181,7 +180,7 @@ if __name__ == "__main__":
         print "Usage : tumblr <url>"
         exit()
     else:
-        url = sys.argv[1]
+        url = sys.argv[1].strip('/')
 
     c = TumblrCrawler(url)
     c.do_crawling()
