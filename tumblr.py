@@ -155,27 +155,36 @@ class TumblrCrawler(object):
                 print e, container
 
     def do_crawling(self):
-        page_link = '/page/1'
-
+        page_link = 1
         worker_list = []
 
         while page_link:
             if len(worker_list) < NUM_WORKER:
                 try:
-                    soup = self._load_page(self.url + page_link)
+                    soup = self._load_page(self.url + '/page/%d' % page_link)
                 except Exception, e:
                     print e, self.url + page_link
                     gevent.sleep(1)
                     continue
 
-                print "## Crawl...", self.url + page_link
+                print "## Crawl...", self.url + '/page/%d' % page_link
                 w = gevent.spawn(self.crawler_page, soup)
                 worker_list.append(w)
-                next_page_link = soup.find(id='footer').find('a')
-                if next_page_link:
-                    page_link = next_page_link.get('href')
-                else:
+                links = soup.find(id='footer').find_all('a')
+                prev_page = page_link
+                try:
+                    for next_page_link in links:
+                        new_link = int(re.match('/page/(\d+)', next_page_link.get('href')).group(1))
+                        if new_link > prev_page:
+                            page_link = new_link
+                            break
+                except Exception, e:
+                    print e
                     page_link = None
+
+                if prev_page == page_link:
+                    # Last page
+                    break
             else:
                 worker_list = filter(lambda x: x.successful() and x.dead, worker_list)
                 if len(worker_list) >= NUM_WORKER:
