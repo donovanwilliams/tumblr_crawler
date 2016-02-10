@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 
 
 MAP_FILEEXT = {'video/mp4': 'mp4'}
-NUM_WORKER = 5
+NUM_WORKER = 4
 BURST_SIZE = 40960
 PROGRESS_BAR_SIZE = 30
 
@@ -47,13 +47,14 @@ class TumblrCrawler(object):
             try:
                 data = urllib2.urlopen(url)
                 file_size = int(data.headers['Content-Length'])
-
                 if os.path.exists(filename) and os.path.getsize(filename) >= file_size:
                     #print "Already downloaded, skip - %s" % filename
                     data.close()
                     return
 
+                print "Downloading - {0} ({1})".format(filename, file_size)
                 fp = open(filename, "wb")
+
 
                 complete = False
                 dn_size = 0
@@ -69,7 +70,7 @@ class TumblrCrawler(object):
                         if fp.tell() != file_size:
                             raise Exception("Download Error")
                         complete = True
-                        print "Complete - {0} ({1})".format(filename, file_size)
+                        print "Complete - {0} ({1} / {2})".format(filename, dn_size , file_size)
 
                     # Progress Bar for single worker
                     # if complete or (time.time() - check_time > 1):
@@ -186,7 +187,11 @@ class TumblrCrawler(object):
                     # Last page
                     break
             else:
-                worker_list = filter(lambda x: x.successful() and x.dead, worker_list)
+                finished_list = filter(lambda x: x.successful() and x.dead, worker_list)
+                if len(finished_list) > 0:
+                    worker_list = list(set(worker_list) - set(finished_list))
+                    gevent.joinall(finished_list)
+
                 if len(worker_list) >= NUM_WORKER:
                     gevent.sleep(1)
 
