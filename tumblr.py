@@ -3,6 +3,7 @@
 
 import gevent
 from gevent import monkey
+import time
 
 monkey.patch_all()
 
@@ -15,7 +16,9 @@ from bs4 import BeautifulSoup
 
 
 MAP_FILEEXT = {'video/mp4': 'mp4'}
-NUM_WORKER = 20
+NUM_WORKER = 5
+BURST_SIZE = 40960
+PROGRESS_BAR_SIZE = 30
 
 
 class TumblrCrawler(object):
@@ -31,9 +34,6 @@ class TumblrCrawler(object):
         while retry < 3:
             try:
                 page = urllib2.urlopen(url)
-                #print page.headers
-                #size = int(page.headers['Content-Length'])
-
                 return BeautifulSoup(page.read(), "html.parser")
             except Exception, e:
                 print e, url
@@ -46,30 +46,62 @@ class TumblrCrawler(object):
         while retry < 3:
             try:
                 data = urllib2.urlopen(url)
-                size = int(data.headers['Content-Length'])
+                file_size = int(data.headers['Content-Length'])
 
-                if os.path.exists(filename) and os.path.getsize(filename) == size:
-                    print "Already downloaded, skip - %s" % filename
+                if os.path.exists(filename) and os.path.getsize(filename) >= file_size:
+                    #print "Already downloaded, skip - %s" % filename
                     data.close()
                     return
 
-                print "Download - ", filename, url
-
                 fp = open(filename, "wb")
-                fp.write(data.read())
+
+                complete = False
+                dn_size = 0
+                check_time = 0
+                while not complete:
+                    ret = data.read(BURST_SIZE)
+                    fp.write(ret)
+                    dn_size += len(ret)
+
+                    if BURST_SIZE != len(ret):
+                        fp.flush()
+                        fp.seek(0, os.SEEK_END)
+                        if fp.tell() != file_size:
+                            raise Exception("Download Error")
+                        complete = True
+                        print "Complete - {0} ({1})".format(filename, file_size)
+
+                    # Progress Bar for single worker
+                    # if complete or (time.time() - check_time > 1):
+                    #     progress = dn_size * 100 / file_size
+                    #     filled_len = PROGRESS_BAR_SIZE * progress / 100
+                    #     progress_text = "\r{0:50}{1:>10}% [{2}{3}]  {4}/{5}".format(filename, progress, '#'*filled_len,
+                    #                                                            ' '*(PROGRESS_BAR_SIZE-filled_len),
+                    #                                                            dn_size, file_size)
+                    #     sys.stdout.write(progress_text)
+                    #     sys.stdout.flush()
+                    #     check_time = time.time()
+
                 fp.close()
-                return
+                break
             except Exception, e:
                 print e, url
                 print "try again..."
+                os.remove(filename)
                 retry += 1
 
-    def _get_file_from_img_tag(self, node):
-        for img in node.find_all('img'):
+    def process_photo_link(self, node):
+        def _get_file_from_img_tag(img):
             if img.has_attr('src'):
                 file_url = img['src']
                 filename = "%s/%s" % (self.trunk_name, file_url.rpartition('/')[-1])
                 self.download(file_url, filename)
+
+        if node.name == 'img':
+            _get_file_from_img_tag(node)
+        else:
+            for img in node.find_all('img'):
+                _get_file_from_img_tag(img)
 
     def process_video_link(self, node):
         for data in node.find_all('iframe'):
@@ -97,25 +129,9 @@ class TumblrCrawler(object):
                     print contents
                     print file_url, file_type, filename, meta
 
-    def process_photo_link(self, node):
-        links = node.find_all('a')
-        if False and len(links) > 0:
-            try:
-                for data in links:
-                    file_url = data['href']
-                    contents = self._load_page(file_url)
-                    for img in contents.find_all('img'):
-                        if img.has_attr('data-src'):
-                            file_url = img['data-src']
-                            filename = "%s/%s" % (self.trunk_name, file_url.rpartition('/')[-1])
-                            self.download(file_url, filename)
-            except Exception, e:
-                print e
-                self._get_file_from_img_tag(node)
-        else:
-            self._get_file_from_img_tag(node)
-
     def process_photoset_link(self, node):
+        self.process_photo_link(node)
+
         for data in node.find_all('iframe'):
             contents = self._load_page(data['src'])
             for img in contents.find_all('a', class_='photoset_photo'):
@@ -124,27 +140,19 @@ class TumblrCrawler(object):
                 self.download(file_url, filename)
 
     def crawler_page(self, page):
-        posts = page.find(id='posts')
-        if posts.name == 'ul':
-            child_tag = 'li'
-        elif posts.name == 'section':
-            child_tag = 'article'
-
-        for post in posts.find_all(name=child_tag):
-            for contents in post.find_all(class_=['post-content', 'post-body']):
-                for container in contents.find_all(class_=['image', 'tumblr_video_container', 'photo-wrapper', 'html_photoset']):
-                    try:
-                        if 'photo-wrapper' in container['class'] or 'image' in container['class']:
-                            self.process_photo_link(container)
-                            pass
-                        elif 'html_photoset' in container['class']:
-                            self.process_photoset_link(container)
-                            pass
-                        else:
-                            self.process_video_link(container)
-                            pass
-                    except Exception, e:
-                        print e, container
+        for container in page.find_all(class_=['photo', 'image', 'photoset', 'video']):
+            try:
+                if 'video' in container['class']:
+                    #print "VIDEO"
+                    self.process_video_link(container)
+                elif 'photoset' in container['class']:
+                    #print "PHOTOSET"
+                    self.process_photoset_link(container)
+                else:
+                    #print "PHOTO"
+                    self.process_photo_link(container)
+            except Exception, e:
+                print e, container
 
     def do_crawling(self):
         page_link = '/page/1'
