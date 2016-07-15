@@ -1,2 +1,2 @@
-gevent
 beautifulsoup4
+youtube_dl
